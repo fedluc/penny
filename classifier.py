@@ -1,53 +1,41 @@
 import os
 import json
 import hashlib
-import difflib
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from sqlalchemy import (
-    create_engine, Column, String, Text, Boolean, Integer, ForeignKey, DateTime, UniqueConstraint
+    create_engine, Column, String, Text, Boolean, Integer, DateTime, ForeignKey
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 import openai
 
-# ---------- OpenAI ----------
+# ---------------- OpenAI ----------------
 api_key = os.environ.get("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=api_key)
 MODEL = "gpt-4.1-mini"
 
-# ---------- SQLAlchemy ----------
+# ---------------- SQLAlchemy ----------------
 Base = declarative_base()
 engine = create_engine("sqlite:///expense.db", echo=False)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-# ---------- Tables ----------
+# ---------------- Tables ----------------
 class Category(Base):
     __tablename__ = "categories"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String, unique=True, nullable=False)
+    name = Column(String, unique=True, nullable=False)  # canonical display name
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    aliases = relationship("CategoryAlias", back_populates="category", cascade="all, delete-orphan")
-
-class CategoryAlias(Base):
-    __tablename__ = "category_aliases"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
-    alias = Column(String, nullable=False)
-    __table_args__ = (UniqueConstraint("alias", name="uq_alias_unique"),)
-
-    category = relationship("Category", back_populates="aliases")
-
 class TransactionCache(Base):
     __tablename__ = "transaction_cache"
     hash = Column(String, primary_key=True)
-    transaction = Column(Text)
+    transaction = Column(Text)                              # normalized JSON
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -55,48 +43,10 @@ class TransactionCache(Base):
 
 Base.metadata.create_all(engine)
 
-# ---------- Utility: category admin ----------
-def ensure_category(name: str, description: Optional[str] = None) -> Category:
-    row = session.query(Category).filter(Category.name.ilike(name)).first()
-    if row:
-        return row
-    row = Category(name=name.strip(), description=description or "")
-    session.add(row)
-    session.commit()
-    return row
-
-def add_alias(category_name: str, alias: str):
-    cat = session.query(Category).filter(Category.name.ilike(category_name)).first()
-    if not cat:
-        raise ValueError(f"Category '{category_name}' not found")
-    alias = alias.strip()
-    if session.query(CategoryAlias).filter(CategoryAlias.alias.ilike(alias)).first():
-        return
-    session.add(CategoryAlias(category_id=cat.id, alias=alias))
-    session.commit()
-
-# ---------- Seed (run once if you want) ----------
-def seed_categories_if_empty():
-    if session.query(Category).count() == 0:
-        for name, desc, alias_list in [
-            ("groceries", "Supermarkets & food stores", ["supermarket", "food shop", "ICA", "Coop", "Willys"]),
-            ("restaurants", "Dining & take-away", ["restaurant", "dining", "cafe"]),
-            ("transportation", "Taxis, rideshare, public transit", ["uber", "taxi", "ride", "bus", "train"]),
-            ("utilities", "Electricity, water, internet, phone", ["electricity", "internet", "telia"]),
-            ("entertainment", "Movies, events, streaming", ["cinema", "movie", "tickets", "concert"]),
-            ("pets", "Pet stores, vet, dog food", ["dog", "cat", "petstore", "zoo"]),
-            ("health", "Pharmacy, clinics, sports", ["pharmacy", "doctor", "gym"]),
-            ("shopping", "Retail & online shopping", ["retail", "online", "store"]),
-            ("subscriptions", "Recurring services/memberships", ["subscription", "membership"]),
-            ("other", "Everything else", ["misc", "uncategorized"]),
-        ]:
-            cat = ensure_category(name, desc)
-            for a in alias_list:
-                add_alias(name, a)
-
-# ---------- Hashing & Cache ----------
+# ---------------- Helpers ----------------
 def _tx_key(tx: Dict) -> str:
     norm = json.dumps(tx, sort_keys=True)
+    import hashlib
     return hashlib.sha256(norm.encode()).hexdigest()
 
 def get_cached_category_id(key: str) -> Optional[int]:
@@ -111,101 +61,101 @@ def put_cached_category_id(key: str, tx: Dict, category_id: int) -> None:
     ))
     session.commit()
 
-# ---------- Category lookup & matching ----------
-def _load_category_index() -> Tuple[List[Category], dict]:
-    """
-    Returns:
-      - active categories
-      - a dict of lowercase name/alias -> Category
-    """
-    cats = session.query(Category).filter(Category.is_active == True).all()
-    index = {}
-    for c in cats:
-        index[c.name.lower()] = c
-        for a in c.aliases:
-            index[a.alias.lower()] = c
-    return cats, index
+def get_active_category_names() -> List[str]:
+    rows = session.query(Category).filter(Category.is_active == True).all()
+    return [r.name for r in rows]
 
-def resolve_category_name_to_row(name_from_model: str) -> Category:
-    """
-    Map free-text category name into a Category row via:
-      1) exact case-insensitive match on name
-      2) alias match
-      3) fuzzy best match on existing names (not aliases) if very close
-      4) fallback to 'other' (create if missing)
-    """
-    cats, index = _load_category_index()
-    if not cats:
-        # Create a minimal 'other' if DB is empty
-        return ensure_category("other", "Fallback category")
+def get_category_by_name(name: str) -> Optional[Category]:
+    # case-insensitive exact match
+    return session.query(Category).filter(Category.name.ilike(name)).first()
 
-    candidate = (name_from_model or "").strip().lower()
-    if candidate in index:
-        return index[candidate]
+def ensure_other_exists() -> Category:
+    row = get_category_by_name("other")
+    if row:
+        return row
+    row = Category(name="other", description="Fallback category")
+    session.add(row)
+    session.commit()
+    return row
 
-    # fuzzy on canonical names
-    names = [c.name.lower() for c in cats]
-    close = difflib.get_close_matches(candidate, names, n=1, cutoff=0.75)
-    if close:
-        for c in cats:
-            if c.name.lower() == close[0]:
-                return c
-
-    # final fallback
-    return ensure_category("other", "Fallback category")
-
-# ---------- GPT classifier (no hard-coded enums) ----------
+# ---------------- Classifier ----------------
 def classify_transaction(tx: Dict) -> int:
     """
-    Returns a category_id. Uses DB-backed categories and caches results by tx hash.
+    Returns a category_id (int). Uses DB categories to constrain the model via function-calling.
+    Caches by transaction hash.
     """
     key = _tx_key(tx)
-    cached_id = get_cached_category_id(key)
-    if cached_id is not None:
-        return cached_id
+    cached = get_cached_category_id(key)
+    if cached is not None:
+        return cached
 
-    # Build a compact hint list from DB to guide the model (purely informational).
-    active_cats = session.query(Category).filter(Category.is_active == True).all()
-    if not active_cats:
-        ensure_category("other", "Fallback category")
-        active_cats = session.query(Category).filter(Category.is_active == True).all()
+    # Load categories from DB; ensure there's at least a fallback
+    categories = get_active_category_names()
+    if not categories:
+        categories = [ensure_other_exists().name]
 
-    # Short, readable hint list
-    lines = []
-    for c in active_cats:
-        kws = [a.alias for a in c.aliases][:6]  # keep prompt short
-        hint = f"- {c.name}" + (f" (e.g., {', '.join(kws)})" if kws else "")
-        lines.append(hint)
-    hints = "\n".join(lines)
+    # Optional: minimal hints from DB to help the model (free text, not authoritative)
+    hints = "\n".join(f"- {name}" for name in categories[:50])  # keep short if many
 
     system_prompt = (
-        "You classify bank transactions into exactly ONE category from the list below.\n"
-        "Return the category NAME only (no extra text).\n\n"
-        "Available categories:\n"
-        f"{hints if hints else '- other'}"
+        "Classify the bank transaction into exactly ONE of the allowed categories. "
+        "Choose ONLY from the provided list. If unsure, pick the closest match."
+        "\n\nAllowed categories:\n" + (hints if hints else "- other")
     )
 
-    # Let the model return a plain string; we’ll map it to a DB row.
+    # Constrain output with a function + enum built from DB
     resp = client.chat.completions.create(
         model=MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Transaction: {json.dumps(tx)}"}
+            {"role": "user", "content": f"Transaction: {json.dumps(tx)}"},
         ],
-        # No function/enum constraint; free text keeps DB truly authoritative.
-        temperature=0  # be deterministic
+        functions=[{
+            "name": "categorize_transaction",
+            "description": "Assign the transaction to one of the predefined categories.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "enum": categories}
+                },
+                "required": ["category"]
+            }
+        }],
+        function_call={"name": "categorize_transaction"},
+        temperature=0
     )
 
-    name = (resp.choices[0].message.content or "").strip()
-    cat_row = resolve_category_name_to_row(name)
-    put_cached_category_id(key, tx, cat_row.id)
-    return cat_row.id
+    args = json.loads(resp.choices[0].message.function_call.arguments)
+    chosen_name = args["category"]  # guaranteed to be one of `categories`
+    row = get_category_by_name(chosen_name) or ensure_other_exists()
 
-# ---------- Example usage ----------
+    put_cached_category_id(key, tx, row.id)
+    return row.id
+
+# ---------------- Seeding (optional) ----------------
+def seed_categories_if_empty():
+    if session.query(Category).count() == 0:
+        seed = [
+            ("groceries", "Supermarkets & food stores"),
+            ("restaurants", "Dining & take-away"),
+            ("transportation", "Taxis, rideshare, public transit"),
+            ("utilities", "Electricity, water, internet, phone"),
+            ("entertainment", "Movies, events, streaming"),
+            ("pets", "Pet stores, vet, dog food"),
+            ("health", "Pharmacy, clinics, sports"),
+            ("shopping", "Retail & online shopping"),
+            ("subscriptions", "Recurring services and memberships"),
+            ("other", "Everything else / fallback"),
+        ]
+        for name, desc in seed:
+            if not get_category_by_name(name):
+                session.add(Category(name=name, description=desc))
+        session.commit()
+
+# Example usage
 if __name__ == "__main__":
-    # Uncomment once to seed some starter categories/aliases
-    seed_categories_if_empty()
-    
+    seed_categories_if_empty()  # run once if you want defaults
+
     transactions = [
         {"date": "2025-06-01", "description": "ICA 45.67", "amount": -45.67},
         {"date": "2025-06-05", "description": "DINNER 30.00", "amount": -30.00},
@@ -217,5 +167,4 @@ if __name__ == "__main__":
 
     for tx in transactions:
         cid = classify_transaction(tx)
-        cname = session.get(Category, cid).name
-        print(f"{tx['description']} → {cname} (id={cid})")
+        print(f"{tx['description']} → {session.get(Category, cid).name} (id={cid})")
