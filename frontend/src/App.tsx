@@ -1,25 +1,68 @@
 import { useState } from "react";
 import Papa from "papaparse";
-import { classifyTransactions, type Transaction } from "./lib/api";
+// Alias to avoid name collision with DOM's Transaction type
+import { classifyTransactions, type Transaction as Tx, type Classified } from "./lib/api";
 
-type Classified = Transaction & { category: string; confidence?: number };
+// robust amount parser (handles SEK, commas, currency symbols)
+function normalizeAmount(v: any): number | null {
+  if (typeof v === "number" && !Number.isNaN(v)) return v;
+  let s = String(v ?? "").trim();
+  if (!s) return null;
+  s = s.replace(/(sek|kr|\$|€|£)/gi, "");
+  s = s.replace(/[\s\u00A0\u202F]/g, "");
+  const hasComma = s.includes(",");
+  const hasDot = s.includes(".");
+  if (hasComma && !hasDot) {
+    s = s.replace(/\./g, "");
+    s = s.replace(",", ".");
+  } else {
+    s = s.replace(/,/g, "");
+  }
+  const n = Number(s);
+  return Number.isNaN(n) ? null : n;
+}
 
 export default function App() {
   const [csvText, setCsvText] = useState("");
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<Tx[]>([]);
   const [results, setResults] = useState<Classified[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [parseInfo, setParseInfo] = useState<{ total: number; kept: number } | null>(null);
 
   function parseCsv(text: string) {
-    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-    const items: Transaction[] = (parsed.data as any[]).map((r) => ({
-      date: String(r.date ?? r.timestamp ?? "").trim(),
-      description: String(r.description ?? r.memo ?? r.text ?? "").trim(),
-      amount: Number(r.amount ?? r.value ?? r.price ?? 0),
-    }))
-    .filter((t) => t.description && !Number.isNaN(t.amount));
-    setTransactions(items);
+    const parsed = Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: (h) => h.toLowerCase().trim(),
+    });
+
+    const rows = (parsed.data as any[]).map((r) => {
+      const date =
+        r.date || r["transaction date"] || r["booking date"] || r.timestamp || r.datum;
+      const description =
+        r.description || r.memo || r.text || r.payee || r.merchant || r.narrative || r.beskrivning;
+      const amountRaw =
+        r.amount ?? r["amount (sek)"] ?? r.debit ?? r.credit ?? r.belopp ?? r["belopp (sek)"];
+      const amount = normalizeAmount(amountRaw);
+      return {
+        date: date ? String(date).trim() : "",
+        description: String(description || "").trim(),
+        amount,
+      };
+    });
+
+    const cleaned = rows.filter(
+      (t) => t.description && typeof t.amount === "number" && !Number.isNaN(t.amount)
+    ) as Tx[];
+
+    setTransactions(cleaned);
+    setParseInfo({ total: (parsed.data as any[]).length, kept: cleaned.length });
+  }
+
+  function onPasteAreaChange(v: string) {
+    setCsvText(v);
+    parseCsv(v);
   }
 
   async function onClassify() {
@@ -49,8 +92,7 @@ export default function App() {
 2025-06-05,DINNER 30.00,-30.00
 2025-06-07,UBER RIDE 15.50,-15.50`}
           value={csvText}
-          onChange={(e) => setCsvText(e.target.value)}
-          onBlur={(e) => parseCsv(e.target.value)}
+          onChange={(e) => onPasteAreaChange(e.target.value)}
         />
         <div style={{ marginTop: 8 }}>
           <input
@@ -69,6 +111,12 @@ export default function App() {
             }}
           />
         </div>
+        {parseInfo && (
+          <div style={{ marginTop: 6, fontSize: 13, opacity: 0.8 }}>
+            Parsed {parseInfo.kept}/{parseInfo.total} rows
+            {parseInfo.kept === 0 && " — check column names/amount format"}
+          </div>
+        )}
       </section>
 
       <section style={{ marginTop: 16 }}>
@@ -86,7 +134,7 @@ export default function App() {
             </thead>
             <tbody>
               {transactions.map((r, i) => (
-                <tr key={i}>
+                <tr key={`${r.date}-${r.description}-${r.amount}-${i}`}>
                   <td>{r.date}</td>
                   <td>{r.description}</td>
                   <td align="right">{r.amount}</td>
@@ -119,14 +167,12 @@ export default function App() {
             </thead>
             <tbody>
               {results.map((r, i) => (
-                <tr key={i}>
+                <tr key={`${r.date}-${r.description}-${r.amount}-res-${i}`}>
                   <td>{r.date}</td>
                   <td>{r.description}</td>
                   <td align="right">{r.amount}</td>
                   <td>{r.category}</td>
-                  <td align="right">
-                    {r.confidence != null ? r.confidence.toFixed(2) : "—"}
-                  </td>
+                  <td align="right">{r.confidence != null ? r.confidence.toFixed(2) : "—"}</td>
                 </tr>
               ))}
             </tbody>
