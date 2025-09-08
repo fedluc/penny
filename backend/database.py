@@ -100,54 +100,74 @@ class Database:
         Base.metadata.create_all(self.engine)
         self._seed_categories_if_empty()
 
-    # -------- Keys & hashing --------
-    def tx_key(self, tx: Dict) -> str:
-        norm = json.dumps(tx, sort_keys=True, separators=(",", ":"))
+        # ---- internal normalization & hashing ----
+    @staticmethod
+    def _normalize_tx(tx: Dict) -> str:
+        # Stable, compact JSON
+        return json.dumps(tx, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _hash(norm: str) -> str:
+        import hashlib
         return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
-    # -------- Categories --------
-    def get_active_category_names(self) -> List[str]:
-        with self.Session() as s:
-            rows = s.scalars(
-                select(Category.name)
-                .where(Category.is_active.is_(True))
-                .order_by(Category.name)
-            ).all()
-            return list(rows)
-
-    def get_category_by_name(self, name: str) -> Optional[Category]:
-        # case-insensitive lookup
-        with self.Session() as s:
-            stmt = (
-                select(Category)
-                .where(func.lower(Category.name) == func.lower(name))
-                .limit(1)
-            )
-            return s.scalars(stmt).first()
-
-    def ensure_other_exists(self) -> Category:
-        with self.Session() as s:
-            stmt = select(Category).where(func.lower(Category.name) == "other").limit(1)
-            cat = s.scalars(stmt).first()
-            if cat:
-                return cat
-            cat = Category(name="other", description="Fallback category")
-            s.add(cat)
-            s.commit()
-            s.refresh(cat)
-            return cat
-
-    # -------- Cache --------
-    def get_cached_category_id(self, key: str) -> Optional[int]:
+    # ---- cache API (no external key needed) ----
+    def cache_lookup(self, tx: Dict) -> Optional[int]:
+        norm = self._normalize_tx(tx)
+        key = self._hash(norm)
         with self.Session() as s:
             row = s.get(TransactionCache, key)
             return row.category_id if row else None
 
-    def put_cached_category_id(self, key: str, tx: Dict, category_id: int) -> None:
-        # Upsert via merge on PK
+    def cache_write(self, tx: Dict, category_id: int) -> None:
+        norm = self._normalize_tx(tx)
+        key = self._hash(norm)
         with self.Session() as s:
-            s.merge(TransactionCache(hash=key, transaction=tx, category_id=category_id))
+            row = s.get(TransactionCache, key)
+            if row:
+                row.transaction = norm
+                row.category_id = category_id
+            else:
+                s.add(TransactionCache(hash=key, transaction=norm, category_id=category_id))
             s.commit()
+
+    # ---- categories API ----
+    def get_or_create_other(self) -> int:
+        with self.Session() as s:
+            row = s.query(Category).filter(Category.name.ilike("other")).first()
+            if row:
+                return row.id
+            row = Category(name="other", description="Fallback category")
+            s.add(row)
+            s.commit()
+            s.refresh(row)
+            return row.id
+
+    def get_active_category_names_with_other(self, limit: int = 50) -> tuple[list[str], int]:
+        """
+        Returns (active_names[:limit], other_id). Ensures 'other' exists and is active list fallback.
+        """
+        other_id = self.get_or_create_other()
+        with self.Session() as s:
+            names = [r.name for r in s.query(Category).filter(Category.is_active == True).order_by(Category.name).all()]
+        if not names:
+            names = ["other"]  # minimal safe set
+        # Ensure 'other' is present in the presented list for the model (nice for clarity)
+        if "other" not in {n.lower() for n in names}:
+            names = names + ["other"]
+        return names[:limit], other_id
+
+    def resolve_category_id(self, name: str, fallback_other_id: Optional[int] = None) -> int:
+        """
+        Case-insensitive lookup. If not found, returns fallback_other_id or creates/returns 'other'.
+        """
+        with self.Session() as s:
+            row = s.query(Category).filter(Category.name.ilike(name)).first()
+            if row:
+                return row.id
+        if fallback_other_id is not None:
+            return fallback_other_id
+        return self.get_or_create_other()
 
     # -------- Seeding --------
     def _seed_categories_if_empty(self) -> None:

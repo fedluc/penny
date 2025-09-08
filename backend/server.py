@@ -1,30 +1,25 @@
-# backend/server.py (only the relevant parts shown)
+# backend/server.py (updated)
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import os
 
-# IMPORTANT: import the single-item classifier
-from gpt_classifier import classify_transaction  # returns int/str/dict per transaction
-
+# Use the new class-based classifier with batch support
+from gpt_classifier import GPTClassifier  # expects .classify_batch(List[Dict]) -> List[int]
 
 class Transaction(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD")
     description: str
     amount: float
 
-
 class Classified(Transaction):
-    # Either category (string label) or category_id (int) will be present depending on your classifier.
     category: Optional[str] = None
     category_id: Optional[int] = None
     confidence: Optional[float] = None
 
-
 class ClassifyResponse(BaseModel):
     results: List[Classified]
-
 
 app = FastAPI(title="Expense Categorizer API", version="0.1.0")
 
@@ -36,11 +31,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 @app.get("/health")
 def health():
     return {"ok": True}
 
+# Lazy singleton for the classifier (initialized after key is ensured)
+_clf: Optional[GPTClassifier] = None
+
+def get_classifier() -> GPTClassifier:
+    global _clf
+    if _clf is None:
+        _clf = GPTClassifier()
+    return _clf
 
 @app.post("/classify", response_model=ClassifyResponse)
 async def classify_endpoint(req: Request, response: Response):
@@ -51,11 +53,11 @@ async def classify_endpoint(req: Request, response: Response):
             os.environ["OPENAI_API_KEY"] = f.read().strip()
 
     try:
-        data: Dict[str, Any] = await req.json()
+        payload: Dict[str, Any] = await req.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    items = data.get("transactions") or data.get("expenses")
+    items = payload.get("transactions") or payload.get("expenses")
     if not isinstance(items, list):
         raise HTTPException(status_code=400, detail="Expected 'transactions' array")
 
@@ -76,40 +78,26 @@ async def classify_endpoint(req: Request, response: Response):
                 status_code=400, detail=f"Invalid transaction at index {i}: {e}"
             )
 
-    # Classify EACH transaction (classify_transaction returns a single result per item)
+    if not transactions:
+        return {"results": []}
+
+    # Batch classify (GPTClassifier returns a list of category_ids)
+    try:
+        clf = get_classifier()
+        category_ids: List[int] = clf.classify_batch(transactions)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"classify_batch failed: {e}")
+
+    # Build normalized response
     results: List[Dict[str, Any]] = []
-    for tx in transactions:
-        try:
-            # First try passing the whole dict
-            pred = classify_transaction(tx)
-        except TypeError:
-            # If your function expects positional args, try common variants
-            try:
-                pred = classify_transaction(tx["description"], tx["amount"], tx["date"])
-            except TypeError:
-                pred = classify_transaction(tx["description"], tx["amount"])
-
-        # Normalize output to a consistent response
-        out: Dict[str, Any] = {
-            **tx,
-            "category": None,
-            "category_id": None,
-            "confidence": None,
-        }
-        if isinstance(pred, dict):
-            # e.g. {"category":"groceries","confidence":0.92} or {"category_id":3}
-            if "category" in pred:
-                out["category"] = pred.get("category")
-            if "category_id" in pred:
-                out["category_id"] = int(pred["category_id"])
-            if "confidence" in pred:
-                out["confidence"] = pred.get("confidence")
-        elif isinstance(pred, (int,)) and not isinstance(pred, bool):
-            out["category_id"] = int(pred)
-        else:
-            # treat as a label string
-            out["category"] = str(pred)
-
-        results.append(out)
+    for tx, cat_id in zip(transactions, category_ids):
+        results.append(
+            {
+                **tx,
+                "category": None,           # reserved if you later return labels
+                "category_id": int(cat_id),
+                "confidence": None,         # reserved if you later emit confidences
+            }
+        )
 
     return {"results": results}
