@@ -4,13 +4,18 @@ import openai
 from typing import Dict
 
 from database import (
-    get_active_category_names, get_category_by_name, ensure_other_exists,
-    _tx_key, get_cached_category_id, put_cached_category_id
+    get_active_category_names,
+    get_category_by_name,
+    ensure_other_exists,
+    _tx_key,
+    get_cached_category_id,
+    put_cached_category_id,
 )
 
 api_key = os.environ.get("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=api_key)
 MODEL = "gpt-4.1-mini"
+
 
 def classify_transaction(tx: Dict) -> int:
     """
@@ -40,19 +45,19 @@ def classify_transaction(tx: Dict) -> int:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Transaction: {json.dumps(tx)}"},
         ],
-        functions=[{
-            "name": "categorize_transaction",
-            "description": "Assign the transaction to one of the predefined categories.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "category": {"type": "string", "enum": categories}
+        functions=[
+            {
+                "name": "categorize_transaction",
+                "description": "Assign the transaction to one of the predefined categories.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"category": {"type": "string", "enum": categories}},
+                    "required": ["category"],
                 },
-                "required": ["category"]
             }
-        }],
+        ],
         function_call={"name": "categorize_transaction"},
-        temperature=0
+        temperature=0,
     )
 
     args = json.loads(resp.choices[0].message.function_call.arguments)
