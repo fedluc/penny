@@ -1,8 +1,6 @@
-from database import session, seed_categories_if_empty, Category
 from gpt_classifier import classify_transaction
 
 if __name__ == "__main__":
-    seed_categories_if_empty()
     transactions = [
         {"date": "2025-06-01", "description": "ICA 45.67", "amount": -45.67},
         {"date": "2025-06-05", "description": "DINNER 30.00", "amount": -30.00},
@@ -21,4 +19,4 @@ if __name__ == "__main__":
     ]
     for tx in transactions:
         cid = classify_transaction(tx)
-        print(f"{tx['description']} → {session.get(Category, cid).name} (id={cid})")
+        print(cid)

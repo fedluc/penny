@@ -89,7 +89,6 @@ Index(
     TransactionCache.created_at.desc(),
 )
 
-
 # ---------------- Database ----------------
 class Database:
     def __init__(self, db_url: str = "sqlite:///expense.db", echo: bool = False):
@@ -99,6 +98,7 @@ class Database:
             bind=self.engine, autoflush=False, autocommit=False, future=True
         )
         Base.metadata.create_all(self.engine)
+        self._seed_categories_if_empty()
 
     # -------- Keys & hashing --------
     def tx_key(self, tx: Dict) -> str:
@@ -137,7 +137,20 @@ class Database:
             s.refresh(cat)
             return cat
 
-    def seed_categories_if_empty(self) -> None:
+    # -------- Cache --------
+    def get_cached_category_id(self, key: str) -> Optional[int]:
+        with self.Session() as s:
+            row = s.get(TransactionCache, key)
+            return row.category_id if row else None
+
+    def put_cached_category_id(self, key: str, tx: Dict, category_id: int) -> None:
+        # Upsert via merge on PK
+        with self.Session() as s:
+            s.merge(TransactionCache(hash=key, transaction=tx, category_id=category_id))
+            s.commit()
+
+    # -------- Seeding --------
+    def _seed_categories_if_empty(self) -> None:
         seed = [
             ("groceries", "Supermarkets & food stores"),
             ("restaurants", "Dining & take-away"),
@@ -160,15 +173,3 @@ class Database:
             if to_add:
                 s.add_all(to_add)
                 s.commit()
-
-    # -------- Cache --------
-    def get_cached_category_id(self, key: str) -> Optional[int]:
-        with self.Session() as s:
-            row = s.get(TransactionCache, key)
-            return row.category_id if row else None
-
-    def put_cached_category_id(self, key: str, tx: Dict, category_id: int) -> None:
-        # Upsert via merge on PK
-        with self.Session() as s:
-            s.merge(TransactionCache(hash=key, transaction=tx, category_id=category_id))
-            s.commit()
