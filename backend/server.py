@@ -1,20 +1,22 @@
-# backend/server.py
+# backend/server.py (only the relevant parts shown)
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import os
 
-from gpt_classifier import classify_transaction # your existing function
+# IMPORTANT: import the single-item classifier
+from gpt_classifier import classify_transaction  # returns int/str/dict per transaction
 
-# ---- Pydantic models (exact transaction shape your backend expects) ----
 class Transaction(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD")
     description: str
-    amount: float  # allow negatives for expenses
+    amount: float
 
 class Classified(Transaction):
-    category: str
+    # Either category (string label) or category_id (int) will be present depending on your classifier.
+    category: Optional[str] = None
+    category_id: Optional[int] = None
     confidence: Optional[float] = None
 
 class ClassifyResponse(BaseModel):
@@ -22,7 +24,6 @@ class ClassifyResponse(BaseModel):
 
 app = FastAPI(title="Expense Categorizer API", version="0.1.0")
 
-# CORS for Vite dev (adjust as needed)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -36,7 +37,7 @@ def health():
     return {"ok": True}
 
 @app.post("/classify", response_model=ClassifyResponse)
-async def classify_endpoint(req: Request):
+async def classify_endpoint(req: Request, response: Response):
     # Ensure OpenAI key (prefer env; fallback reads backend/openai_api_key)
     key_path = os.path.join(os.path.dirname(__file__), "openai_api_key")
     if not os.getenv("OPENAI_API_KEY") and os.path.exists(key_path):
@@ -48,12 +49,11 @@ async def classify_endpoint(req: Request):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Accept either `transactions` (preferred) or `expenses` (legacy)
-    items = data.get("transactions")
+    items = data.get("transactions") or data.get("expenses")
     if not isinstance(items, list):
-        raise HTTPException(400, detail="Payload must include 'transactions': [...]")
+        raise HTTPException(status_code=400, detail="Expected 'transactions' array")
 
-    # Normalize to the exact structure your backend expects
+    # Validate & normalize to expected shape
     transactions: List[Dict[str, Any]] = []
     for i, raw in enumerate(items):
         try:
@@ -66,24 +66,32 @@ async def classify_endpoint(req: Request):
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid transaction at index {i}: {e}")
 
-    top_k = int(data.get("top_k", 1))
-
-    try:
-        # Try with top_k first; fall back if your function doesn't support it.
-        try:
-            preds = classify_transaction(transactions, top_k=top_k)
-        except TypeError:
-            preds = classify_transaction(transactions)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"classify() failed: {e}")
-
+    # Classify EACH transaction (classify_transaction returns a single result per item)
     results: List[Dict[str, Any]] = []
-    for tx, pred in zip(transactions, preds):
+    for tx in transactions:
+        try:
+            # First try passing the whole dict
+            pred = classify_transaction(tx)
+        except TypeError:
+            # If your function expects positional args, try common variants
+            try:
+                pred = classify_transaction(tx["description"], tx["amount"], tx["date"])
+            except TypeError:
+                pred = classify_transaction(tx["description"], tx["amount"])
+
+        # Normalize output to a consistent response
+        out: Dict[str, Any] = {**tx, "category": None, "category_id": None, "confidence": None}
         if isinstance(pred, dict):
-            category = pred.get("category")
-            confidence = pred.get("confidence")
+            # e.g. {"category":"groceries","confidence":0.92} or {"category_id":3}
+            if "category" in pred:   out["category"] = pred.get("category")
+            if "category_id" in pred: out["category_id"] = int(pred["category_id"])
+            if "confidence" in pred: out["confidence"] = pred.get("confidence")
+        elif isinstance(pred, (int,)) and not isinstance(pred, bool):
+            out["category_id"] = int(pred)
         else:
-            category, confidence = str(pred), None
-        results.append({**tx, "category": category, "confidence": confidence})
+            # treat as a label string
+            out["category"] = str(pred)
+
+        results.append(out)
 
     return {"results": results}
