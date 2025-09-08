@@ -3,14 +3,7 @@ import json
 import openai
 from typing import Dict
 
-from database import (
-    get_active_category_names,
-    get_category_by_name,
-    ensure_other_exists,
-    _tx_key,
-    get_cached_category_id,
-    put_cached_category_id,
-)
+from database import Database
 
 api_key = os.environ.get("OPENAI_API_KEY")
 client = openai.OpenAI(api_key=api_key)
@@ -22,14 +15,15 @@ def classify_transaction(tx: Dict) -> int:
     Returns a category_id (int). Uses DB categories to constrain the model via function-calling.
     Caches by transaction hash.
     """
-    key = _tx_key(tx)
-    cached = get_cached_category_id(key)
+    db = Database()
+    key = db.tx_key(tx)
+    cached = db.get_cached_category_id(key)
     if cached is not None:
         return cached
 
-    categories = get_active_category_names()
+    categories = db.get_active_category_names()
     if not categories:
-        categories = [ensure_other_exists().name]
+        categories = [db.ensure_other_exists().name]
 
     hints = "\n".join(f"- {name}" for name in categories[:50])
 
@@ -62,7 +56,7 @@ def classify_transaction(tx: Dict) -> int:
 
     args = json.loads(resp.choices[0].message.function_call.arguments)
     chosen_name = args["category"]
-    row = get_category_by_name(chosen_name) or ensure_other_exists()
+    row = db.get_category_by_name(chosen_name) or db.ensure_other_exists()
 
-    put_cached_category_id(key, tx, row.id)
+    db.put_cached_category_id(key, tx, row.id)
     return row.id
