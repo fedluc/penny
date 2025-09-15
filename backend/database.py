@@ -3,20 +3,16 @@ from __future__ import annotations
 import json
 import hashlib
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
 
 from sqlalchemy import (
     JSON,
     Boolean,
-    Column,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
     create_engine,
-    event,
-    func,
     select,
     Index,
 )
@@ -47,7 +43,7 @@ class Category(Base):
     name: Mapped[str] = mapped_column(
         String(120), unique=True, nullable=False, index=True
     )
-    description: Mapped[Optional[str]] = mapped_column(Text)
+    description: Mapped[str | None] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -57,7 +53,7 @@ class Category(Base):
     )
 
     # reverse side of relationship
-    cached_transactions: Mapped[List[TransactionCache]] = relationship(
+    cached_transactions: Mapped[list["TransactionCache"]] = relationship(
         back_populates="category", cascade="all, delete-orphan", passive_deletes=True
     )
 
@@ -70,7 +66,7 @@ class TransactionCache(Base):
 
     # SHA-256 hex -> 64 chars
     hash: Mapped[str] = mapped_column(String(64), primary_key=True)
-    transaction: Mapped[Dict] = mapped_column(JSON, nullable=False)
+    transaction: Mapped[dict] = mapped_column(JSON, nullable=False)
     category_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("categories.id", ondelete="RESTRICT"),
@@ -81,7 +77,7 @@ class TransactionCache(Base):
         DateTime(timezone=True), default=utcnow, nullable=False
     )
 
-    category: Mapped[Category] = relationship(back_populates="cached_transactions")
+    category: Mapped["Category"] = relationship(back_populates="cached_transactions")
 
 
 # helpful composite index for exploration
@@ -103,28 +99,25 @@ class Database:
         Base.metadata.create_all(self.engine)
         self._seed_categories_if_empty()
 
-        # ---- internal normalization & hashing ----
-
+    # ---- internal normalization & hashing ----
     @staticmethod
-    def _normalize_tx(tx: Dict) -> str:
+    def _normalize_tx(tx: dict) -> str:
         # Stable, compact JSON
         return json.dumps(tx, sort_keys=True, separators=(",", ":"))
 
     @staticmethod
     def _hash(norm: str) -> str:
-        import hashlib
-
         return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
     # ---- cache API (no external key needed) ----
-    def cache_lookup(self, tx: Dict) -> Optional[int]:
+    def cache_lookup(self, tx: dict) -> int | None:
         norm = self._normalize_tx(tx)
         key = self._hash(norm)
         with self.Session() as s:
             row = s.get(TransactionCache, key)
             return row.category_id if row else None
 
-    def cache_write(self, tx: Dict, category_id: int) -> None:
+    def cache_write(self, tx: dict, category_id: int) -> None:
         norm = self._normalize_tx(tx)
         key = self._hash(norm)
         with self.Session() as s:
@@ -163,7 +156,7 @@ class Database:
             names = [
                 r.name
                 for r in s.query(Category)
-                .filter(Category.is_active == True)
+                .filter(Category.is_active.is_(True))
                 .order_by(Category.name)
                 .all()
             ]
@@ -175,7 +168,7 @@ class Database:
         return names[:limit], other_id
 
     def resolve_category_id(
-        self, name: str, fallback_other_id: Optional[int] = None
+        self, name: str, fallback_other_id: int | None = None
     ) -> int:
         """
         Case-insensitive lookup. If not found, returns fallback_other_id or creates/returns 'other'.

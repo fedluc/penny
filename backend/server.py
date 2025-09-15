@@ -1,12 +1,11 @@
 # backend/server.py
-from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, Depends, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
-import os
+import json
 
-from gpt_classifier import GPTClassifier  # classify_batch(List[Dict]) -> List[int]
+from gpt_classifier import GPTClassifier  # classify_batch(list[dict]) -> list[int]
 from database import TransactionCache  # ORM model to read cached transactions
 
 # ---------- App name and version ----------
@@ -22,13 +21,13 @@ class Transaction(BaseModel):
 
 
 class Classified(Transaction):
-    category: Optional[str] = None
-    category_id: Optional[int] = None
-    confidence: Optional[float] = None
+    category: str | None = None
+    category_id: int | None = None
+    confidence: float | None = None
 
 
 class ClassifyResponse(BaseModel):
-    results: List[Classified]
+    results: list[Classified]
 
 
 # ---------- App Builder ----------
@@ -39,8 +38,8 @@ class AppBuilder:
         title: str,
         version: str,
         *,
-        cors_origins: Optional[List[str]] = None,
-        classifier: Optional[GPTClassifier] = None,
+        cors_origins: list[str] | None = None,
+        classifier: GPTClassifier | None = None,
     ):
         self.title = title
         self.version = version
@@ -83,16 +82,19 @@ class AppBuilder:
                 raise HTTPException(
                     status_code=400, detail="Expected 'transactions' array"
                 )
+
             transactions = self._normalize_transactions(items)
             if not transactions:
                 return {"results": []}
+
             try:
-                category_ids: List[int] = clf.classify_batch(transactions)
+                category_ids: list[int] = clf.classify_batch(transactions)
             except Exception as e:
                 raise HTTPException(
                     status_code=500, detail=f"classify_batch failed: {e}"
                 )
-            results: List[Dict[str, Any]] = []
+
+            results: list[dict] = []
             for tx, cat_id in zip(transactions, category_ids):
                 results.append(
                     {
@@ -126,9 +128,9 @@ class AppBuilder:
                     .limit(limit)
                     .all()
                 )
-                # TransactionCache.transaction is stored as TEXT (JSON string) in your current schema
+
                 # Keep shape consistent with POST /classify response
-                results: List[Dict[str, Any]] = []
+                results: list[dict] = []
                 for r in rows:
                     # If you later switch to JSON type, remove the json.loads below
                     try:
@@ -166,7 +168,7 @@ class AppBuilder:
         return list_transactions
 
     # ---------- Private helpers ----------
-    async def _read_json(self, req: Request) -> Dict[str, Any]:
+    async def _read_json(self, req: Request) -> dict:
         try:
             obj = await req.json()
             if not isinstance(obj, dict):
@@ -175,10 +177,8 @@ class AppBuilder:
         except Exception:
             raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    def _normalize_transactions(
-        self, items: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        txs: List[Dict[str, Any]] = []
+    def _normalize_transactions(self, items: list[dict]) -> list[dict]:
+        txs: list[dict] = []
         for i, raw in enumerate(items):
             try:
                 tx = Transaction(
