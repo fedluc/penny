@@ -1,2 +1,2 @@
 #!/bin/bash
-uvicorn server:app --reload --port 8000
+uvicorn server:create_app --factory --reload

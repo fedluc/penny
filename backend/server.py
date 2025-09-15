@@ -1,103 +1,236 @@
-# backend/server.py (updated)
+# backend/server.py
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Depends, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from contextlib import asynccontextmanager
 import os
 
-# Use the new class-based classifier with batch support
-from gpt_classifier import GPTClassifier  # expects .classify_batch(List[Dict]) -> List[int]
+from gpt_classifier import GPTClassifier  # classify_batch(List[Dict]) -> List[int]
+from database import TransactionCache  # ORM model to read cached transactions
 
+# ---------- App name and version ----------
+APP_NAME = "Expense Categorizer API"
+APP_VERSION = "0.1.0"
+
+
+# ---------- Pydantic models ----------
 class Transaction(BaseModel):
     date: str = Field(..., description="YYYY-MM-DD")
     description: str
     amount: float
+
 
 class Classified(Transaction):
     category: Optional[str] = None
     category_id: Optional[int] = None
     confidence: Optional[float] = None
 
+
 class ClassifyResponse(BaseModel):
     results: List[Classified]
 
-app = FastAPI(title="Expense Categorizer API", version="0.1.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ---------- App Builder ----------
+class AppBuilder:
 
-@app.get("/health")
-def health():
-    return {"ok": True}
+    def __init__(
+        self,
+        title: str,
+        version: str,
+        *,
+        cors_origins: Optional[List[str]] = None,
+        classifier: Optional[GPTClassifier] = None,
+    ):
+        self.title = title
+        self.version = version
+        self.cors_origins = cors_origins or [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+        ]
+        self._provided_classifier = classifier
 
-# Lazy singleton for the classifier (initialized after key is ensured)
-_clf: Optional[GPTClassifier] = None
-
-def get_classifier() -> GPTClassifier:
-    global _clf
-    if _clf is None:
-        _clf = GPTClassifier()
-    return _clf
-
-@app.post("/classify", response_model=ClassifyResponse)
-async def classify_endpoint(req: Request, response: Response):
-    # Ensure OpenAI key (prefer env; fallback reads backend/openai_api_key)
-    key_path = os.path.join(os.path.dirname(__file__), "openai_api_key")
-    if not os.getenv("OPENAI_API_KEY") and os.path.exists(key_path):
-        with open(key_path, "r") as f:
-            os.environ["OPENAI_API_KEY"] = f.read().strip()
-
-    try:
-        payload: Dict[str, Any] = await req.json()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-
-    items = payload.get("transactions") or payload.get("expenses")
-    if not isinstance(items, list):
-        raise HTTPException(status_code=400, detail="Expected 'transactions' array")
-
-    # Validate & normalize to expected shape
-    transactions: List[Dict[str, Any]] = []
-    for i, raw in enumerate(items):
+    # --- lifespan: startup/teardown of long-lived resources ---
+    @asynccontextmanager
+    async def _lifespan(self, app: FastAPI):
+        # Create (or use injected) classifier
+        app.state.classifier = self._provided_classifier or GPTClassifier()
         try:
-            tx = Transaction(
-                date=str(raw.get("date", "")).strip(),
-                description=str(raw.get("description", "")).strip(),
-                amount=float(raw.get("amount")),
-            )
-            transactions.append(
-                {"date": tx.date, "description": tx.description, "amount": tx.amount}
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=400, detail=f"Invalid transaction at index {i}: {e}"
-            )
+            yield
+        finally:
+            # Teardown hooks for future resources (DB pools, HTTP sessions), if any.
+            pass
 
-    if not transactions:
-        return {"results": []}
+    # --- DI: fetch classifier for handlers ---
+    def dep_classifier(self, request: Request) -> GPTClassifier:
+        return request.app.state.classifier
 
-    # Batch classify (GPTClassifier returns a list of category_ids)
-    try:
-        clf = get_classifier()
-        category_ids: List[int] = clf.classify_batch(transactions)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"classify_batch failed: {e}")
+    # ---------- Handlers ----------
+    def _health_handler(self):
+        async def health():
+            return {"ok": True}
 
-    # Build normalized response
-    results: List[Dict[str, Any]] = []
-    for tx, cat_id in zip(transactions, category_ids):
-        results.append(
-            {
-                **tx,
-                "category": None,           # reserved if you later return labels
-                "category_id": int(cat_id),
-                "confidence": None,         # reserved if you later emit confidences
-            }
+        return health
+
+    def _classify_handler(self):
+        async def classify_endpoint(
+            req: Request,
+            clf: GPTClassifier = Depends(self.dep_classifier),
+        ):
+            payload = await self._read_json(req)
+            items = payload.get("transactions") or payload.get("expenses")
+            if not isinstance(items, list):
+                raise HTTPException(
+                    status_code=400, detail="Expected 'transactions' array"
+                )
+            transactions = self._normalize_transactions(items)
+            if not transactions:
+                return {"results": []}
+            try:
+                category_ids: List[int] = clf.classify_batch(transactions)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500, detail=f"classify_batch failed: {e}"
+                )
+            results: List[Dict[str, Any]] = []
+            for tx, cat_id in zip(transactions, category_ids):
+                results.append(
+                    {
+                        **tx,
+                        "category": None,
+                        "category_id": int(cat_id),
+                        "confidence": None,
+                    }
+                )
+            return {"results": results}
+
+        return classify_endpoint
+
+    def _list_transactions_handler(self):
+        async def list_transactions(
+            clf: GPTClassifier = Depends(self.dep_classifier),
+            limit: int = Query(50, ge=1, le=500, description="Max rows to return"),
+            offset: int = Query(0, ge=0, description="Rows to skip"),
+        ):
+            """
+            Return cached transactions already stored in the database.
+            Useful for debugging/inspecting classification results.
+            """
+            # Reuse the DB managed by the classifier (no new globals/singletons)
+            db = clf.db  # GPTClassifier holds your Database instance
+            with db.Session() as s:
+                rows = (
+                    s.query(TransactionCache)
+                    .order_by(TransactionCache.created_at.desc())
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+                # TransactionCache.transaction is stored as TEXT (JSON string) in your current schema
+                # Keep shape consistent with POST /classify response
+                results: List[Dict[str, Any]] = []
+                for r in rows:
+                    # If you later switch to JSON type, remove the json.loads below
+                    try:
+                        tx_obj = (
+                            r.transaction
+                            if isinstance(r.transaction, dict)
+                            else json.loads(r.transaction)
+                        )
+                    except Exception:
+                        # Fallback: return raw text if parsing fails
+                        tx_obj = {"raw": r.transaction}
+
+                    results.append(
+                        {
+                            **{
+                                "date": tx_obj.get("date"),
+                                "description": tx_obj.get("description"),
+                                "amount": tx_obj.get("amount"),
+                            },
+                            "category": None,  # reserved for future label support
+                            "category_id": (
+                                int(r.category_id)
+                                if r.category_id is not None
+                                else None
+                            ),
+                            "confidence": None,
+                            "hash": r.hash,
+                            "created_at": (
+                                r.created_at.isoformat() if r.created_at else None
+                            ),
+                        }
+                    )
+                return {"results": results}
+
+        return list_transactions
+
+    # ---------- Private helpers ----------
+    async def _read_json(self, req: Request) -> Dict[str, Any]:
+        try:
+            obj = await req.json()
+            if not isinstance(obj, dict):
+                raise ValueError("Root JSON must be an object")
+            return obj
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    def _normalize_transactions(
+        self, items: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        txs: List[Dict[str, Any]] = []
+        for i, raw in enumerate(items):
+            try:
+                tx = Transaction(
+                    date=str(raw.get("date", "")).strip(),
+                    description=str(raw.get("description", "")).strip(),
+                    amount=float(raw.get("amount")),
+                )
+                txs.append(
+                    {
+                        "date": tx.date,
+                        "description": tx.description,
+                        "amount": tx.amount,
+                    }
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400, detail=f"Invalid transaction at index {i}: {e}"
+                )
+        return txs
+
+    # --- Router assembly ---
+    def _build_router(self) -> APIRouter:
+        router = APIRouter()
+        router.add_api_route("/health", self._health_handler(), methods=["GET"])
+        router.add_api_route(
+            "/classify",
+            self._classify_handler(),
+            methods=["POST"],
+            response_model=ClassifyResponse,
         )
+        router.add_api_route(
+            "/transactions",
+            self._list_transactions_handler(),
+            methods=["GET"],
+            summary="List cached transactions",
+        )
+        return router
 
-    return {"results": results}
+    # --- public factory ---
+    def create_app(self) -> FastAPI:
+        app = FastAPI(title=self.title, version=self.version, lifespan=self._lifespan)
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=self.cors_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        app.include_router(self._build_router())
+        return app
+
+
+# Factory entrypoint for uvicorn
+def create_app() -> FastAPI:
+    return AppBuilder(APP_NAME, APP_VERSION).create_app()

@@ -38,6 +38,8 @@ def utcnow() -> datetime:
 
 # ---------------- Tables ----------------
 Base = declarative_base()
+
+
 class Category(Base):
     __tablename__ = "categories"
 
@@ -89,6 +91,7 @@ Index(
     TransactionCache.created_at.desc(),
 )
 
+
 # ---------------- Database ----------------
 class Database:
     def __init__(self, db_url: str = "sqlite:///expense.db", echo: bool = False):
@@ -101,6 +104,7 @@ class Database:
         self._seed_categories_if_empty()
 
         # ---- internal normalization & hashing ----
+
     @staticmethod
     def _normalize_tx(tx: Dict) -> str:
         # Stable, compact JSON
@@ -109,6 +113,7 @@ class Database:
     @staticmethod
     def _hash(norm: str) -> str:
         import hashlib
+
         return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
     # ---- cache API (no external key needed) ----
@@ -128,7 +133,11 @@ class Database:
                 row.transaction = norm
                 row.category_id = category_id
             else:
-                s.add(TransactionCache(hash=key, transaction=norm, category_id=category_id))
+                s.add(
+                    TransactionCache(
+                        hash=key, transaction=norm, category_id=category_id
+                    )
+                )
             s.commit()
 
     # ---- categories API ----
@@ -143,13 +152,21 @@ class Database:
             s.refresh(row)
             return row.id
 
-    def get_active_category_names_with_other(self, limit: int = 50) -> tuple[list[str], int]:
+    def get_active_category_names_with_other(
+        self, limit: int = 50
+    ) -> tuple[list[str], int]:
         """
         Returns (active_names[:limit], other_id). Ensures 'other' exists and is active list fallback.
         """
         other_id = self.get_or_create_other()
         with self.Session() as s:
-            names = [r.name for r in s.query(Category).filter(Category.is_active == True).order_by(Category.name).all()]
+            names = [
+                r.name
+                for r in s.query(Category)
+                .filter(Category.is_active == True)
+                .order_by(Category.name)
+                .all()
+            ]
         if not names:
             names = ["other"]  # minimal safe set
         # Ensure 'other' is present in the presented list for the model (nice for clarity)
@@ -157,7 +174,9 @@ class Database:
             names = names + ["other"]
         return names[:limit], other_id
 
-    def resolve_category_id(self, name: str, fallback_other_id: Optional[int] = None) -> int:
+    def resolve_category_id(
+        self, name: str, fallback_other_id: Optional[int] = None
+    ) -> int:
         """
         Case-insensitive lookup. If not found, returns fallback_other_id or creates/returns 'other'.
         """
