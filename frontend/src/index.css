@@ -102,6 +102,31 @@ img, svg, video { max-width: 100%; height: auto; }
   opacity: .55; cursor: not-allowed; box-shadow: none; transform: none;
 }
 
+/* --- Brand home-link button --- */
+.brand-link {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  cursor: pointer;
+  transition: transform .12s ease, opacity .12s ease;
+  opacity: 0.9;
+}
+.brand-link:hover {
+  opacity: 1;
+  transform: scale(1.05);
+}
+.brand-link img {
+  width: 44px;   /* bigger logo */
+  height: 44px;
+  display: block;
+}
+
+
+
 /* ---------- Utility Flex/Grid ---------- */
 .row { display: flex; gap: 12px; align-items: center; }
 .wrap { flex-wrap: wrap; justify-content: center; }

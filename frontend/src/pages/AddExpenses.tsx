@@ -4,6 +4,7 @@ import PreviewTable from "../components/PreviewTable";
 import ResultsTable from "../components/ResultsTable";
 import type { Transaction as Tx } from "../lib/csv";
 import { classifyTransactions, type Classified } from "../lib/api";
+import BrandLink from "../components/BrandLink";
 import "./AddExpenses.css";
 
 export default function AddExpenses() {
@@ -29,66 +30,64 @@ export default function AddExpenses() {
   }
 
   return (
-    <main className="page add">
-      <div className="container">
-        <h1 className="section-title" style={{ fontSize: 24 }}>Add Expenses</h1>
+    <>
+      <BrandLink />
+      <main className="page add">
+        <div className="container">
+          <h1 className="section-title" style={{ fontSize: 24 }}>Add Expenses</h1>
 
-        {/* 1) CSV Input */}
-        <section className="section">
-          <h3 className="section-title">1) Paste CSV (headers: date, description, amount)</h3>
-          <div className="card">
-            <UploadCsv
-              value={csvText}
-              onValueChange={setCsvText}
-              onParsed={(rows, stats) => {
-                setTransactions(rows);
-                setParseInfo(stats);
-              }}
-            />
-            {parseInfo && (
-              <div className="muted" style={{ marginTop: 8 }}>
-                Parsed {parseInfo.kept}/{parseInfo.total} rows
-                {parseInfo.kept === 0 && " — check column names/amount format"}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* 2) Preview */}
-        <section className="section">
-          <h3 className="section-title">2) Preview</h3>
-          <div className="card">
-            <PreviewTable rows={transactions} />
-          </div>
-        </section>
-
-        {/* 3) Classify */}
-        <section className="section row wrap">
-          <button
-            className="btn btn-primary"
-            disabled={loading || transactions.length === 0}
-            onClick={onClassify}
-          >
-            {loading ? "Classifying…" : "3) Send to backend"}
-          </button>
-          {error && <p className="add-error">{error}</p>}
-        </section>
-
-
-        {/* Results */}
-        {results && (
           <section className="section">
-            <h3 className="section-title">Results</h3>
+            <h3 className="section-title">1) Paste CSV (headers: date, description, amount)</h3>
             <div className="card">
-              <ResultsTable rows={results} />
+              <UploadCsv
+                value={csvText}
+                onValueChange={setCsvText}
+                onParsed={(rows, stats) => {
+                  setTransactions(rows);
+                  setParseInfo(stats);
+                }}
+              />
+              {parseInfo && (
+                <div className="muted" style={{ marginTop: 8 }}>
+                  Parsed {parseInfo.kept}/{parseInfo.total} rows
+                  {parseInfo.kept === 0 && " — check column names/amount format"}
+                </div>
+              )}
             </div>
           </section>
-        )}
 
-        <footer className="muted" style={{ marginTop: 24 }}>
-          API base: {import.meta.env.VITE_API_BASE}
-        </footer>
-      </div>
-    </main>
+          <section className="section">
+            <h3 className="section-title">2) Preview</h3>
+            <div className="card">
+              <PreviewTable rows={transactions} />
+            </div>
+          </section>
+
+          <section className="section row wrap">
+            <button
+              className="btn btn-primary"
+              disabled={loading || transactions.length === 0}
+              onClick={onClassify}
+            >
+              {loading ? "Classifying…" : "3) Send to backend"}
+            </button>
+            {error && <p className="add-error">{error}</p>}
+          </section>
+
+          {results && (
+            <section className="section">
+              <h3 className="section-title">Results</h3>
+              <div className="card">
+                <ResultsTable rows={results} />
+              </div>
+            </section>
+          )}
+
+          <footer className="muted" style={{ marginTop: 24 }}>
+            API base: {import.meta.env.VITE_API_BASE}
+          </footer>
+        </div>
+      </main>
+    </>
   );
 }
