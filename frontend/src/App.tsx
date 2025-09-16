@@ -81,7 +81,7 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: 24 }}>
-      <h1>Expense Categorizer</h1>
+      <h1> Penny </h1>
 
       <section style={{ marginTop: 16 }}>
         <h3>1) Paste CSV (headers: date, description, amount)</h3>
