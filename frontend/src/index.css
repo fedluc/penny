@@ -78,6 +78,7 @@ img, svg, video { max-width: 100%; height: auto; }
 .btn-primary {
   background: var(--color-primary);
   color: var(--color-black);
+  border: none
 }
 .btn-primary:hover { background: var(--color-primary-dark); }
 
