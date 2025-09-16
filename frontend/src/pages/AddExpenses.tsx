@@ -31,26 +31,30 @@ export default function AddExpenses() {
   return (
     <main className="page add">
       <div className="container">
-        <h1 className="header">Add Expenses</h1>
+        <h1 className="section-title" style={{ fontSize: 24 }}>Add Expenses</h1>
 
+        {/* 1) CSV Input */}
         <section className="section">
           <h3 className="section-title">1) Paste CSV (headers: date, description, amount)</h3>
-          <UploadCsv
-            value={csvText}
-            onValueChange={setCsvText}
-            onParsed={(rows, stats) => {
-              setTransactions(rows);
-              setParseInfo(stats);
-            }}
-          />
-          {parseInfo && (
-            <div className="parsed muted">
-              Parsed {parseInfo.kept}/{parseInfo.total} rows
-              {parseInfo.kept === 0 && " — check column names/amount format"}
-            </div>
-          )}
+          <div className="card">
+            <UploadCsv
+              value={csvText}
+              onValueChange={setCsvText}
+              onParsed={(rows, stats) => {
+                setTransactions(rows);
+                setParseInfo(stats);
+              }}
+            />
+            {parseInfo && (
+              <div className="muted" style={{ marginTop: 8 }}>
+                Parsed {parseInfo.kept}/{parseInfo.total} rows
+                {parseInfo.kept === 0 && " — check column names/amount format"}
+              </div>
+            )}
+          </div>
         </section>
 
+        {/* 2) Preview */}
         <section className="section">
           <h3 className="section-title">2) Preview</h3>
           <div className="card">
@@ -58,17 +62,20 @@ export default function AddExpenses() {
           </div>
         </section>
 
-        <section className="section">
+        {/* 3) Classify */}
+        <section className="section row wrap">
           <button
-            className="btn btn-solid"
+            className="btn btn-primary"
             disabled={loading || transactions.length === 0}
             onClick={onClassify}
           >
             {loading ? "Classifying…" : "3) Send to backend"}
           </button>
-          {error && <p className="error">{error}</p>}
+          {error && <p className="add-error">{error}</p>}
         </section>
 
+
+        {/* Results */}
         {results && (
           <section className="section">
             <h3 className="section-title">Results</h3>
@@ -78,7 +85,9 @@ export default function AddExpenses() {
           </section>
         )}
 
-        <footer>API base: {import.meta.env.VITE_API_BASE}</footer>
+        <footer className="muted" style={{ marginTop: 24 }}>
+          API base: {import.meta.env.VITE_API_BASE}
+        </footer>
       </div>
     </main>
   );
