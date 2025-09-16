@@ -1,68 +1,173 @@
+/* ---------- Brand Palette ---------- */
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* Brand */
+  --color-primary: #ff6cae;
+  --color-primary-dark: #e35b9a;
+  --color-black: #000000;
+  --color-white: #ffffff;
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* Dark neutrals */
+  --color-bg: #111111;       /* app background */
+  --color-surface: #1c1c1c;  /* cards, containers */
+  --color-border: #333333;
+  --color-text: #f3f4f6;     /* light gray text */
+  --color-text-muted: #9ca3af;
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  /* Font */
+  --font-sans: system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+}
+
+/* ---------- Base ---------- */
+html, body, #root { height: 100%; }
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+/* Ensure form controls inherit font */
+button, input, select, textarea { font: inherit; }
+
+/* Text selection */
+::selection { background: color-mix(in srgb, var(--color-primary) 30%, white); }
+
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
 }
 
-body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+/* Safe media sizing */
+img, svg, video { max-width: 100%; height: auto; }
+
+/* ---------- Layout Helpers ---------- */
+.page { min-height: 100dvh; padding: 24px; }
+.center-screen { display: grid; place-items: center; width: 100vw; height: 100dvh; }
+@supports (height: 100svh) { .center-screen { height: 100svh; } }
+.container { width: 100%; max-width: 960px; margin: 0 auto; }
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5);
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
+.section { margin-top: 16px; }
+.section-title { margin: 0 0 8px; font-size: 18px; font-weight: 600; color: var(--color-text); }
+.muted { opacity: .75; font-size: 13px; color: var(--color-text-muted); }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
+/* ---------- Buttons ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 14px 20px;
+  border-radius: 12px;
+  text-decoration: none;
+  font-weight: 600;
+  min-width: 160px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+  transition: transform .1s ease, box-shadow .1s ease, background .15s ease, color .15s ease;
   cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+.btn-primary {
+  background: var(--color-primary);
+  color: var(--color-black);
+  border: none
+}
+.btn-primary:hover { background: var(--color-primary-dark); }
+
+.btn-dark {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.btn-dark:hover { background: var(--color-border); }
+
+.btn-outline {
+  background: transparent;
+  border: 2px solid var(--color-primary);
+  color: var(--color-primary);
+}
+.btn-outline:hover {
+  background: var(--color-primary);
+  color: var(--color-black);
+}
+
+.btn:active { transform: translateY(1px); }
+.btn[disabled], .btn:disabled {
+  opacity: .55; cursor: not-allowed; box-shadow: none; transform: none;
+}
+
+/* --- Brand home-link button --- */
+.brand-link {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  cursor: pointer;
+  transition: transform .12s ease, opacity .12s ease;
+  opacity: 0.9;
+}
+.brand-link:hover {
+  opacity: 1;
+  transform: scale(1.05);
+}
+.brand-link img {
+  width: 44px;   /* bigger logo */
+  height: 44px;
+  display: block;
+}
+
+
+
+/* ---------- Utility Flex/Grid ---------- */
+.row { display: flex; gap: 12px; align-items: center; }
+.wrap { flex-wrap: wrap; justify-content: center; }
+
+/* ---------- Tables ---------- */
+table { border-collapse: collapse; width: 100%; }
+th, td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border); /* FIXED */
+  text-align: left;
+}
+
+/* ---------- Form Controls ---------- */
+input[type="text"], input[type="number"], input[type="date"],
+textarea, select, .form-control {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+input:focus, textarea:focus, select:focus, .form-control:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(255, 108, 174, 0.25);
+}
+
+/* Textareas should be resizable vertically only */
+textarea { resize: vertical; }
+
+/* ---------- Focus visibility (accessibility) ---------- */
+.btn:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.form-control:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-primary) 60%, transparent);
+  outline-offset: 2px;
 }
