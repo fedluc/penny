@@ -1,0 +1,26 @@
+.home {
+  /* full screen centering for the landing card */
+  width: 100vw;
+  height: 100dvh;
+  display: grid;
+  place-items: center;
+}
+
+.home-card {
+  max-width: 520px;
+  text-align: center;
+}
+
+.home-logo {
+  width: 96px;
+  height: auto;
+  display: block;
+  margin: 0 auto 20px;
+}
+
+.home-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
