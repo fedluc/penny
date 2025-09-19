@@ -97,33 +97,35 @@ export default function AddExpenses() {
             >
               {loadingClassify ? "Classifying…" : "3) Classify"}
             </button>
-
-            <button
-              className="btn btn-success"
-              disabled={loadingSave || !results || results.length === 0}
-              onClick={onSave}
-              title={results && results.length > 0 ? "Save classified expenses" : "Classify first"}
-            >
-              {loadingSave ? "Saving…" : "4) Save to backend"}
-            </button>
-
-            {savedCount !== null && !error && (
-              <p className="muted" style={{ marginTop: 8 }}>
-                Saved {savedCount} expense{savedCount === 1 ? "" : "s"} ✓
-              </p>
-            )}
-
             {error && <p className="add-error">{error}</p>}
           </section>
 
           {results && (
-            <section className="section">
-              <h3 className="section-title">Results</h3>
-              <div className="card">
-                {/* If your ResultsTable supports editing categories, users can tweak before saving */}
-                <ResultsTable rows={results} />
-              </div>
-            </section>
+            <>
+              <section className="section">
+                <h3 className="section-title">Results</h3>
+                <div className="card">
+                  <ResultsTable rows={results} />
+                </div>
+              </section>
+
+              <section className="section row wrap" style={{ gap: 12 }}>
+                <button
+                  className="btn btn-primary"
+                  disabled={loadingSave || results.length === 0}
+                  onClick={onSave}
+                  title={results.length > 0 ? "Save classified expenses" : "Classify first"}
+                >
+                  {loadingSave ? "Saving…" : "4) Save to backend"}
+                </button>
+                {savedCount !== null && !error && (
+                  <p className="muted" style={{ marginTop: 8 }}>
+                    Saved {savedCount} expense{savedCount === 1 ? "" : "s"} ✓
+                  </p>
+                )}
+                {error && <p className="add-error">{error}</p>}
+              </section>
+            </>
           )}
 
           <footer className="muted" style={{ marginTop: 24 }}>
