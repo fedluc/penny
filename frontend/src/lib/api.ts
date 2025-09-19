@@ -1,21 +1,20 @@
 export type Transaction = { date: string; description: string; amount: number };
 
 export type Classified = Transaction & {
-  category?: string | null;
-  category_id?: number | null;
-  confidence?: number | null;
+  category: string;
+  category_id: number;
+  confidence: number;
 };
 
 // Rows returned by GET /expenses
 export type ExpenseRow = {
-  id: number;
   date: string;
   description: string;
   amount: number;
-  category_id: number | null;
-  category?: string | null;
-  created_at?: string | null;
+  category: string;
+  created_at: string;
 };
+
 
 // --- Helpers ---
 const base = import.meta.env.VITE_API_BASE as string;

@@ -9,7 +9,7 @@ from datetime import datetime, date as DateOnly
 
 
 from gpt_classifier import GPTClassifier
-from database import Database, Expense
+from database import Database, Expense, Category
 
 # ---------- App name and version ----------
 APP_NAME = "Expense Categorizer API"
@@ -208,40 +208,35 @@ class AppBuilder:
             Return stored expenses (new Expense model), most recent first by date then amount desc.
             """
             with db.Session() as s:
-                q = s.query(Expense)
+                # Join to get the category name; keep LEFT JOIN (isouter=True) in case of missing categories
+                q = s.query(Expense, Category.name.label("category_name"))
                 if since:
                     try:
                         since_dt = datetime.strptime(since, "%Y-%m-%d").date()
                         q = q.filter(Expense.date >= since_dt)
                     except Exception:
-                        raise HTTPException(
-                            status_code=400, detail=f"Invalid 'since' date: {since!r}"
-                        )
+                        raise HTTPException(status_code=400, detail=f"Invalid 'since' date: {since!r}")
 
                 rows = (
-                    q.order_by(
-                        Expense.date.desc(), Expense.amount.desc(), Expense.id.desc()
-                    )
+                    q.join(Category, Expense.category_id == Category.id, isouter=True)
+                    .order_by(Expense.date.desc(), Expense.amount.desc(), Expense.id.desc())
                     .offset(offset)
                     .limit(limit)
                     .all()
                 )
 
                 results: list[dict] = []
-                for r in rows:
+                for exp, cat_name in rows:
                     results.append(
                         {
-                            "id": r.id,
-                            "date": r.date.isoformat(),
-                            "description": r.description,
-                            "amount": float(r.amount),
-                            "category_id": r.category_id,
-                            "category": None,  # fill via join if you want names
-                            "created_at": (
-                                r.created_at.isoformat() if r.created_at else None
-                            ),
+                            "date": exp.date.isoformat(),
+                            "description": exp.description,
+                            "amount": float(exp.amount),
+                            "category": cat_name,  # ← human-readable name
+                            "created_at": exp.created_at.isoformat() if exp.created_at else None,
                         }
                     )
+
                 return {"results": results}
 
         return list_expenses

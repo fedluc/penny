@@ -22,7 +22,12 @@ export default function VisualizeExpenses() {
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
-      const chunk = await fetchExpenses(PAGE_SIZE, nextOffset, undefined, abortRef.current.signal);
+      const chunk = await fetchExpenses(
+        PAGE_SIZE,
+        nextOffset,
+        undefined,
+        abortRef.current.signal
+      );
       setRows((prev) => (nextOffset === 0 ? chunk : [...prev, ...chunk]));
       setHasMore(chunk.length === PAGE_SIZE);
       setOffset(nextOffset + chunk.length);
@@ -44,11 +49,10 @@ export default function VisualizeExpenses() {
   const formatted = useMemo(
     () =>
       rows.map((r) => ({
-        id: r.id,
         date: r.date ?? "",
         description: r.description ?? "",
         amount: typeof r.amount === "number" ? r.amount : 0,
-        category_id: r.category_id ?? null,
+        category: r.category ?? "",
         created_at: r.created_at ?? "",
       })),
     [rows]
@@ -72,25 +76,23 @@ export default function VisualizeExpenses() {
                     <th style={{ whiteSpace: "nowrap" }}>Date</th>
                     <th>Description</th>
                     <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>Amount</th>
-                    <th style={{ whiteSpace: "nowrap" }}>Category&nbsp;ID</th>
+                    <th style={{ whiteSpace: "nowrap" }}>Category</th>
                     <th style={{ whiteSpace: "nowrap" }}>Created&nbsp;At</th>
-                    <th style={{ whiteSpace: "nowrap" }}>ID</th>
                   </tr>
                 </thead>
                 <tbody>
                   {formatted.length === 0 && !loading && !error && (
-                    <tr><td colSpan={6} className="muted">No data</td></tr>
+                    <tr><td colSpan={5} className="muted">No data</td></tr>
                   )}
-                  {formatted.map((r) => (
-                    <tr key={r.id}>
+                  {formatted.map((r, i) => (
+                    <tr key={`${r.date}-${r.description}-${r.amount}-${i}`}>
                       <td>{r.date}</td>
                       <td>{r.description}</td>
                       <td style={{ textAlign: "right" }}>
                         {typeof r.amount === "number" ? r.amount.toFixed(2) : ""}
                       </td>
-                      <td>{r.category_id ?? ""}</td>
+                      <td>{r.category}</td>
                       <td>{r.created_at}</td>
-                      <td>{r.id}</td>
                     </tr>
                   ))}
                 </tbody>

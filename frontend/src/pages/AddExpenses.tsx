@@ -58,7 +58,7 @@ export default function AddExpenses() {
           <h1 className="section-title" style={{ fontSize: 24 }}>Add Expenses</h1>
 
           <section className="section">
-            <h3 className="section-title">1) Paste CSV (headers: date, description, amount)</h3>
+            <h3 className="section-title">Paste CSV (headers: date, description, amount)</h3>
             <div className="card">
               <UploadCsv
                 value={csvText}
@@ -82,7 +82,7 @@ export default function AddExpenses() {
           </section>
 
           <section className="section">
-            <h3 className="section-title">2) Preview</h3>
+            <h3 className="section-title">Preview</h3>
             <div className="card">
               <PreviewTable rows={transactions} />
             </div>
@@ -95,7 +95,7 @@ export default function AddExpenses() {
               onClick={onClassify}
               title="Run classification without saving"
             >
-              {loadingClassify ? "Classifying…" : "3) Classify"}
+              {loadingClassify ? "Classifying…" : "Classify"}
             </button>
             {error && <p className="add-error">{error}</p>}
           </section>
@@ -116,7 +116,7 @@ export default function AddExpenses() {
                   onClick={onSave}
                   title={results.length > 0 ? "Save classified expenses" : "Classify first"}
                 >
-                  {loadingSave ? "Saving…" : "4) Save to backend"}
+                  {loadingSave ? "Saving…" : "Save"}
                 </button>
                 {savedCount !== null && !error && (
                   <p className="muted" style={{ marginTop: 8 }}>
