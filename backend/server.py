@@ -1,12 +1,15 @@
 # backend/server.py
+from __future__ import annotations
+
 from fastapi import FastAPI, HTTPException, Request, Depends, APIRouter, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
-import json
+from datetime import datetime, date as DateOnly
 
-from gpt_classifier import GPTClassifier  # classify_batch(list[dict]) -> list[int]
-from database import TransactionCache  # ORM model to read cached transactions
+
+from gpt_classifier import GPTClassifier
+from database import Database, Expense
 
 # ---------- App name and version ----------
 APP_NAME = "Expense Categorizer API"
@@ -28,6 +31,14 @@ class Classified(Transaction):
 
 class ClassifyResponse(BaseModel):
     results: list[Classified]
+
+
+class SaveExpensesRequest(BaseModel):
+    expenses: list[Classified] = Field(..., description="Expenses to persist")
+
+
+class SaveExpensesResponse(BaseModel):
+    inserted_ids: list[int]
 
 
 # ---------- App Builder ----------
@@ -54,15 +65,24 @@ class AppBuilder:
     async def _lifespan(self, app: FastAPI):
         # Create (or use injected) classifier
         app.state.classifier = self._provided_classifier or GPTClassifier()
+        # Expose DB (assumes classifier has .db)
+        if not hasattr(app.state.classifier, "db"):
+            raise RuntimeError(
+                "GPTClassifier must expose a `.db` attribute (Database)."
+            )
+        app.state.db: Database = app.state.classifier.db
         try:
             yield
         finally:
             # Teardown hooks for future resources (DB pools, HTTP sessions), if any.
             pass
 
-    # --- DI: fetch classifier for handlers ---
+    # --- DI: fetch classifier/db for handlers ---
     def dep_classifier(self, request: Request) -> GPTClassifier:
         return request.app.state.classifier
+
+    def dep_db(self, request: Request) -> Database:
+        return request.app.state.db
 
     # ---------- Handlers ----------
     def _health_handler(self):
@@ -80,7 +100,8 @@ class AppBuilder:
             items = payload.get("transactions") or payload.get("expenses")
             if not isinstance(items, list):
                 raise HTTPException(
-                    status_code=400, detail="Expected 'transactions' array"
+                    status_code=400,
+                    detail="Expected 'expenses' array",
                 )
 
             transactions = self._normalize_transactions(items)
@@ -108,56 +129,114 @@ class AppBuilder:
 
         return classify_endpoint
 
-    def _list_transactions_handler(self):
-        async def list_transactions(
-            clf: GPTClassifier = Depends(self.dep_classifier),
+    def _save_expenses_handler(self):
+        async def save_expenses(
+            payload: SaveExpensesRequest,
+            db: Database = Depends(self.dep_db),
+        ) -> SaveExpensesResponse:
+            """
+            Persist expenses (classified or not). If category is a name, it will be resolved.
+            If neither category nor category_id provided, they fall back to 'other'.
+            """
+            inserted: list[int] = []
+
+            # Ensure 'other' exists once (avoid doing this per-row)
+            other_id = db.get_or_create_other()
+
+            for i, item in enumerate(payload.expenses):
+                # Validate/parse date (YYYY-MM-DD)
+                try:
+                    d: DateOnly = datetime.strptime(item.date, "%Y-%m-%d").date()
+                except Exception:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid date at index {i}: {item.date!r}",
+                    )
+
+                # Amount
+                try:
+                    amt = float(item.amount)
+                except Exception:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid amount at index {i}: {item.amount!r}",
+                    )
+
+                # Resolve category id
+                cat_id: int
+                if item.category_id is not None:
+                    cat_id = int(item.category_id)
+                elif item.category:
+                    cat_id = db.resolve_category_id(
+                        item.category, fallback_other_id=other_id
+                    )
+                else:
+                    cat_id = other_id
+
+                # Save; include raw copy for provenance
+                raw = {
+                    "date": item.date,
+                    "description": item.description,
+                    "amount": amt,
+                    "category": item.category,
+                    "category_id": cat_id,
+                }
+                new_id = db.add_expense(
+                    date=d,
+                    amount=amt,
+                    description=item.description,
+                    category_id=cat_id,
+                    raw=raw,
+                    dedupe_on_hash=True,  # idempotent on identical raw payloads
+                )
+                inserted.append(new_id)
+
+            return SaveExpensesResponse(inserted_ids=inserted)
+
+        return save_expenses
+
+    def _list_expenses_handler(self):
+        async def list_expenses(
+            db: Database = Depends(self.dep_db),
             limit: int = Query(50, ge=1, le=500, description="Max rows to return"),
             offset: int = Query(0, ge=0, description="Rows to skip"),
+            since: str | None = Query(
+                None, description="YYYY-MM-DD lower bound on date"
+            ),
         ):
             """
-            Return cached transactions already stored in the database.
-            Useful for debugging/inspecting classification results.
+            Return stored expenses (new Expense model), most recent first by date then amount desc.
             """
-            # Reuse the DB managed by the classifier (no new globals/singletons)
-            db = clf.db  # GPTClassifier holds your Database instance
             with db.Session() as s:
+                q = s.query(Expense)
+                if since:
+                    try:
+                        since_dt = datetime.strptime(since, "%Y-%m-%d").date()
+                        q = q.filter(Expense.date >= since_dt)
+                    except Exception:
+                        raise HTTPException(
+                            status_code=400, detail=f"Invalid 'since' date: {since!r}"
+                        )
+
                 rows = (
-                    s.query(TransactionCache)
-                    .order_by(TransactionCache.created_at.desc())
+                    q.order_by(
+                        Expense.date.desc(), Expense.amount.desc(), Expense.id.desc()
+                    )
                     .offset(offset)
                     .limit(limit)
                     .all()
                 )
 
-                # Keep shape consistent with POST /classify response
                 results: list[dict] = []
                 for r in rows:
-                    # If you later switch to JSON type, remove the json.loads below
-                    try:
-                        tx_obj = (
-                            r.transaction
-                            if isinstance(r.transaction, dict)
-                            else json.loads(r.transaction)
-                        )
-                    except Exception:
-                        # Fallback: return raw text if parsing fails
-                        tx_obj = {"raw": r.transaction}
-
                     results.append(
                         {
-                            **{
-                                "date": tx_obj.get("date"),
-                                "description": tx_obj.get("description"),
-                                "amount": tx_obj.get("amount"),
-                            },
-                            "category": None,  # reserved for future label support
-                            "category_id": (
-                                int(r.category_id)
-                                if r.category_id is not None
-                                else None
-                            ),
-                            "confidence": None,
-                            "hash": r.hash,
+                            "id": r.id,
+                            "date": r.date.isoformat(),
+                            "description": r.description,
+                            "amount": float(r.amount),
+                            "category_id": r.category_id,
+                            "category": None,  # fill via join if you want names
                             "created_at": (
                                 r.created_at.isoformat() if r.created_at else None
                             ),
@@ -165,7 +244,7 @@ class AppBuilder:
                     )
                 return {"results": results}
 
-        return list_transactions
+        return list_expenses
 
     # ---------- Private helpers ----------
     async def _read_json(self, req: Request) -> dict:
@@ -203,17 +282,28 @@ class AppBuilder:
     def _build_router(self) -> APIRouter:
         router = APIRouter()
         router.add_api_route("/health", self._health_handler(), methods=["GET"])
+
+        # Classify (no persistence)
         router.add_api_route(
             "/classify",
             self._classify_handler(),
             methods=["POST"],
             response_model=ClassifyResponse,
         )
+
+        # Persist & list expenses (new model)
         router.add_api_route(
-            "/transactions",
-            self._list_transactions_handler(),
+            "/expenses",
+            self._save_expenses_handler(),
+            methods=["POST"],
+            response_model=SaveExpensesResponse,
+            summary="Persist expenses",
+        )
+        router.add_api_route(
+            "/expenses",
+            self._list_expenses_handler(),
             methods=["GET"],
-            summary="List cached transactions",
+            summary="List stored expenses",
         )
         return router
 

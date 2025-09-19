@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import BrandLink from "../components/BrandLink";
-import { fetchTransactions, type ServerClassified } from "../lib/api";
+import { fetchExpenses, type ExpenseRow } from "../lib/api";
 import "./VisualizeExpenses.css";
 
 const PAGE_SIZE = 50;
 
 export default function VisualizeExpenses() {
-  const [rows, setRows] = useState<ServerClassified[]>([]);
+  const [rows, setRows] = useState<ExpenseRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
@@ -18,12 +18,12 @@ export default function VisualizeExpenses() {
     setLoading(true);
     setError(null);
     try {
-      // Abort a previous in-flight call if any
+      // Abort any in-flight request
       abortRef.current?.abort();
       abortRef.current = new AbortController();
 
-      const chunk = await fetchTransactions(PAGE_SIZE, nextOffset);
-      setRows(prev => nextOffset === 0 ? chunk : [...prev, ...chunk]);
+      const chunk = await fetchExpenses(PAGE_SIZE, nextOffset, undefined, abortRef.current.signal);
+      setRows((prev) => (nextOffset === 0 ? chunk : [...prev, ...chunk]));
       setHasMore(chunk.length === PAGE_SIZE);
       setOffset(nextOffset + chunk.length);
     } catch (e: any) {
@@ -44,11 +44,11 @@ export default function VisualizeExpenses() {
   const formatted = useMemo(
     () =>
       rows.map((r) => ({
+        id: r.id,
         date: r.date ?? "",
         description: r.description ?? "",
-        amount: r.amount ?? 0,
+        amount: typeof r.amount === "number" ? r.amount : 0,
         category_id: r.category_id ?? null,
-        hash: r.hash ?? "",
         created_at: r.created_at ?? "",
       })),
     [rows]
@@ -59,8 +59,10 @@ export default function VisualizeExpenses() {
       <BrandLink />
       <main className="page visualize">
         <div className="container">
-          <h1 className="section-title" style={{ fontSize: 24 }}>Transactions</h1>
-          <p className="muted">Fetched from <code>/transactions</code> ({rows.length}{hasMore ? "+" : ""} rows)</p>
+          <h1 className="section-title" style={{ fontSize: 24 }}>Expenses</h1>
+          <p className="muted">
+            Fetched from <code>/expenses</code> ({rows.length}{hasMore ? "+" : ""} rows)
+          </p>
 
           <section className="section">
             <div className="card" style={{ overflowX: "auto" }}>
@@ -71,26 +73,24 @@ export default function VisualizeExpenses() {
                     <th>Description</th>
                     <th style={{ textAlign: "right", whiteSpace: "nowrap" }}>Amount</th>
                     <th style={{ whiteSpace: "nowrap" }}>Category&nbsp;ID</th>
-                    <th>Hash</th>
                     <th style={{ whiteSpace: "nowrap" }}>Created&nbsp;At</th>
+                    <th style={{ whiteSpace: "nowrap" }}>ID</th>
                   </tr>
                 </thead>
                 <tbody>
                   {formatted.length === 0 && !loading && !error && (
                     <tr><td colSpan={6} className="muted">No data</td></tr>
                   )}
-                  {formatted.map((r, i) => (
-                    <tr key={`${r.hash || "row"}-${i}`}>
+                  {formatted.map((r) => (
+                    <tr key={r.id}>
                       <td>{r.date}</td>
                       <td>{r.description}</td>
                       <td style={{ textAlign: "right" }}>
                         {typeof r.amount === "number" ? r.amount.toFixed(2) : ""}
                       </td>
                       <td>{r.category_id ?? ""}</td>
-                      <td style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {r.hash}
-                      </td>
                       <td>{r.created_at}</td>
+                      <td>{r.id}</td>
                     </tr>
                   ))}
                 </tbody>
