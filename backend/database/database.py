@@ -1,33 +1,18 @@
 from __future__ import annotations
 
-import json
-import hashlib
 from datetime import date as DateOnly
 
-from sqlalchemy import and_, create_engine, event, func, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import and_, event, func, select
+from database.engine import make_engine, make_session_factory
 from database.tables import Base, Category, Expense, ClassificationCache
+from database.services.hashing import normalize_for_hash, hash
 
 DEFAULT_DB_URL = "sqlite:///expense.db"
 
 class Database:
     def __init__(self, db_url: str = DEFAULT_DB_URL, echo: bool = False):
-        self.engine = create_engine(
-            db_url,
-            echo=echo,
-            future=True,
-            connect_args=(
-                {"check_same_thread": False} if db_url.startswith("sqlite") else {}
-            ), # For FastAPI + threads,
-        )
-
-        # Register PRAGMAs BEFORE any connections are used (i.e., before create_all)
-        if db_url.startswith("sqlite"):
-            self._apply_sqlite_pragmas()
-
-        self.Session = sessionmaker(
-            bind=self.engine, autoflush=False, autocommit=False, future=True
-        )
+        self.engine = make_engine(db_url, echo=echo)
+        self.Session = make_session_factory(self.engine)
         Base.metadata.create_all(self.engine)
         self._seed_categories_if_empty()
 
@@ -41,16 +26,6 @@ class Database:
             cursor.execute("PRAGMA busy_timeout=2000;")
             cursor.execute("PRAGMA temp_store=MEMORY;")
             cursor.close()
-
-    # ---- Hash helpers (optional, for dedupe/idempotency) ----
-    @staticmethod
-    def _normalize_for_hash(payload: dict) -> str:
-        # Stable, compact JSON
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-    @staticmethod
-    def _hash(norm: str) -> str:
-        return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
     # ---- Category helpers (unchanged) ----
     def get_or_create_other(self) -> int:
@@ -118,8 +93,8 @@ class Database:
         with self.Session() as s:
             hash_val = None
             if dedupe_on_hash and raw is not None:
-                norm = self._normalize_for_hash(raw)
-                hash_val = self._hash(norm)
+                norm = normalize_for_hash(raw)
+                hash_val = hash(norm)
                 existing = s.query(Expense.id).filter(Expense.hash == hash_val).first()
                 if existing:
                     return existing[0]
@@ -136,24 +111,16 @@ class Database:
             s.refresh(exp)
             return exp.id
 
-    def _normalize_for_hash(self, payload: dict) -> str:
-        import json
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
-
-    def _hash(self, norm: str) -> str:
-        import hashlib
-        return hashlib.sha256(norm.encode("utf-8")).hexdigest()
-
     def cache_lookup(self, tx: dict) -> int | None:
-        norm = self._normalize_for_hash(tx)
-        key = self._hash(norm)
+        norm = normalize_for_hash(tx)
+        key = hash(norm)
         with self.Session() as s:
             row = s.get(ClassificationCache, key)
             return int(row.category_id) if row else None
 
     def cache_write(self, tx: dict, category_id: int) -> None:
-        norm = self._normalize_for_hash(tx)
-        key = self._hash(norm)
+        norm = normalize_for_hash(tx)
+        key = hash(norm)
         with self.Session() as s:
             existing = s.get(ClassificationCache, key)
             if existing:
