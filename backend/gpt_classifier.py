@@ -2,7 +2,7 @@ import os
 import json
 
 import openai
-from database import Database
+from database.database import Database
 
 DEFAULT_MODEL = "gpt-4.1-mini"
 OPENAI_API_KEY_FILE = "OPENAI_API_KEY"
