@@ -7,9 +7,9 @@ from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 from datetime import datetime, date as DateOnly
 
-
 from gpt_classifier import GPTClassifier
-from database.database import Database, Expense, Category
+from database.database import Database
+from database.tables import Expense, Category
 
 # ---------- App name and version ----------
 APP_NAME = "Expense Categorizer API"
@@ -215,11 +215,15 @@ class AppBuilder:
                         since_dt = datetime.strptime(since, "%Y-%m-%d").date()
                         q = q.filter(Expense.date >= since_dt)
                     except Exception:
-                        raise HTTPException(status_code=400, detail=f"Invalid 'since' date: {since!r}")
+                        raise HTTPException(
+                            status_code=400, detail=f"Invalid 'since' date: {since!r}"
+                        )
 
                 rows = (
                     q.join(Category, Expense.category_id == Category.id, isouter=True)
-                    .order_by(Expense.date.desc(), Expense.amount.desc(), Expense.id.desc())
+                    .order_by(
+                        Expense.date.desc(), Expense.amount.desc(), Expense.id.desc()
+                    )
                     .offset(offset)
                     .limit(limit)
                     .all()
@@ -233,7 +237,9 @@ class AppBuilder:
                             "description": exp.description,
                             "amount": float(exp.amount),
                             "category": cat_name,  # ← human-readable name
-                            "created_at": exp.created_at.isoformat() if exp.created_at else None,
+                            "created_at": (
+                                exp.created_at.isoformat() if exp.created_at else None
+                            ),
                         }
                     )
 

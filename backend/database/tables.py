@@ -21,7 +21,6 @@ from sqlalchemy.orm import (
     declarative_base,
 )
 
-# ---------------- Base & helpers ----------------
 
 def utcnow() -> datetime:
     # Always timezone-aware UTC
@@ -29,8 +28,6 @@ def utcnow() -> datetime:
 
 
 Base = declarative_base()
-
-# ---------------- Tables ----------------
 
 
 class Category(Base):
