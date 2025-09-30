@@ -9,7 +9,7 @@ from datetime import datetime, date as DateOnly
 
 
 from gpt_classifier import GPTClassifier
-from database import Database, Expense, Category
+from database.database import Database, Expense, Category
 
 # ---------- App name and version ----------
 APP_NAME = "Expense Categorizer API"
