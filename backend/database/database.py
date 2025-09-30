@@ -10,6 +10,7 @@ from database.services.reporting import (
     ResultOrder,
     totals_by_category as totals_by_category_service,
 )
+from database.services.saving import save_expenses as save_expenses_service
 from database.tables import Base
 
 DEFAULT_DB_URL = "sqlite:///expense.db"
@@ -64,6 +65,30 @@ class Database:
                 raw=raw,
                 dedupe_on_hash=dedupe_on_hash,
             )
+
+    def save_expenses(
+        self, items: list[dict], *, dedupe_on_hash: bool = True
+    ) -> list[int]:
+        """
+        Saves a list of expense items to the database.
+        """
+        with self.Session() as s:
+            return save_expenses_service(s, items, dedupe_on_hash=dedupe_on_hash)
+
+    def list_expenses(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        since: DateOnly | None = None,
+    ) -> list[dict]:
+        """
+        Return stored expenses, most recent first by date, amount desc, id desc.
+        Dict keys: date (YYYY-MM-DD), description, amount, category, created_at (ISO or None).
+        """
+        with self.Session() as s:
+            rows = ExpenseRepo(s).list_recent(limit=limit, offset=offset, since=since)
+            return rows
 
     def get_expenses_between(
         self,

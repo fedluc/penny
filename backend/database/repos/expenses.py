@@ -94,3 +94,37 @@ class ExpenseRepo(BaseRepo):
     def _find_id_by_hash(self, key: str) -> int | None:
         row = self.s.execute(select(Expense.id).where(Expense.hash == key)).first()
         return int(row[0]) if row else None
+
+    def list_recent(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        since: DateOnly | None = None,
+    ) -> list[dict]:
+        stmt = select(
+            Expense.id,
+            Expense.date,
+            Expense.amount,
+            Expense.description,
+            Expense.created_at,
+            Category.name.label("category_name"),
+        ).join(Category, Expense.category_id == Category.id, isouter=True)
+        if since is not None:
+            stmt = stmt.where(Expense.date >= since)
+        stmt = (
+            stmt.order_by(Expense.date.desc(), Expense.amount.desc(), Expense.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        rows = self.s.execute(stmt).all()
+        return [
+            {
+                "date": r.date.isoformat(),
+                "description": r.description,
+                "amount": float(r.amount),
+                "category": r.category_name,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
