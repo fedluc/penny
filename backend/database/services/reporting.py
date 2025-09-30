@@ -1,16 +1,22 @@
+from enum import Enum
 from sqlalchemy import and_, select, func
 from sqlalchemy.orm import Session
 from database.tables import Expense, Category
 
 
-def totals_by_category_between(
+class ResultOrder(Enum):
+    DESC = "desc"
+    ASC = "asc"
+
+
+def totals_by_category(
     s: Session,
     start_date,
     end_date,
     *,
-    only_active: bool | None = True,
+    only_active: bool = True,
     include_zero: bool = False,
-    order: str = "desc",
+    order: ResultOrder = ResultOrder.DESC,
     limit: int | None = None,
     offset: int = 0,
 ) -> list[dict]:
@@ -40,21 +46,15 @@ def totals_by_category_between(
             .join(Expense, Expense.category_id == Category.id)
             .where(Expense.date.between(start_date, end_date))
         )
-
-    if only_active is True:
-        stmt = stmt.where(Category.is_active.is_(True))
-    elif only_active is False:
-        stmt = stmt.where(Category.is_active.is_(False))
-
+    stmt = stmt.where(Category.is_active.is_(only_active))
     stmt = stmt.group_by(Category.id, Category.name, Category.is_active)
     stmt = (
-        stmt.order_by(total_expr.asc(), Category.name.asc())
-        if order == "asc"
-        else stmt.order_by(total_expr.desc(), Category.name.asc())
+        stmt.order_by(total_expr.desc(), Category.name.desc())
+        if order == ResultOrder.DESC
+        else stmt.order_by(total_expr.asc(), Category.name.asc())
     )
     if limit is not None:
         stmt = stmt.limit(limit).offset(offset)
-
     rows = s.execute(stmt).all()
     return [
         {

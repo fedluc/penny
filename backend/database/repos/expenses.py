@@ -2,6 +2,7 @@ from sqlalchemy import select, func
 from database.repos.base import BaseRepo
 from database.tables import Expense, Category
 from database.services.hashing import hash
+from database.services.reporting import ResultOrder
 from datetime import date as DateOnly
 
 
@@ -41,7 +42,7 @@ class ExpenseRepo(BaseRepo):
         category_id: int | None = None,
         limit: int | None = None,
         offset: int = 0,
-        order: str = "asc",
+        order: ResultOrder = ResultOrder.DESC,
     ) -> list[dict]:
         stmt = (
             select(
@@ -58,9 +59,9 @@ class ExpenseRepo(BaseRepo):
         if category_id is not None:
             stmt = stmt.where(Expense.category_id == category_id)
         stmt = (
-            stmt.order_by(Expense.date.asc(), Expense.id.asc())
-            if order != "desc"
-            else stmt.order_by(Expense.date.desc(), Expense.id.desc())
+            stmt.order_by(Expense.date.desc(), Expense.id.desc())
+            if order == ResultOrder.DESC
+            else stmt.order_by(Expense.date.asc(), Expense.id.asc())
         )
         if limit is not None:
             stmt = stmt.limit(limit).offset(offset)
