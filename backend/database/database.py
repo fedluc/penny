@@ -98,7 +98,7 @@ class Database:
         category: int | str = None,
         limit: int | None = None,
         offset: int = 0,
-        order: str = "asc",  # "asc" | "desc" by date
+        order: ResultOrder = ResultOrder.DESC,
     ) -> list[dict]:
         """
         Return expenses within [start_date, end_date], optionally filtered by category
